@@ -1147,10 +1147,15 @@ class AppBottomNavigationBar extends StatelessWidget {
               tooltip: 'Update',
               icon: const Icon(Icons.system_update_alt),
               onPressed: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Actiunea Update va fi definita ulterior.'),
+                Navigator.of(context).pushAndRemoveUntil(
+                  MaterialPageRoute(
+                    builder: (context) => StorePriceUpdatesPage(
+                      userId: userId,
+                      userType: userType,
+                      initialStoreId: storeId,
+                    ),
                   ),
+                  (route) => false,
                 );
               },
             ),
@@ -1203,6 +1208,304 @@ class AppBottomNavigationBar extends StatelessWidget {
             onPressed: onAccount ?? () => _openHome(context, account: true),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class StorePriceUpdatesPage extends StatefulWidget {
+  final String? userId;
+  final int userType;
+  final int? initialStoreId;
+
+  const StorePriceUpdatesPage({
+    super.key,
+    this.userId,
+    required this.userType,
+    this.initialStoreId,
+  });
+
+  @override
+  State<StorePriceUpdatesPage> createState() => _StorePriceUpdatesPageState();
+}
+
+class _StorePriceUpdatesPageState extends State<StorePriceUpdatesPage> {
+  List<dynamic> _stores = [];
+  List<dynamic> _products = [];
+  int? _selectedStoreId;
+  bool _loadingStores = true;
+  bool _loadingProducts = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadStores();
+  }
+
+  Future<int?> _detectNearbyStore() async {
+    try {
+      if (!await Geolocator.isLocationServiceEnabled()) return null;
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        return null;
+      }
+
+      final position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+      final response = await http.get(
+        Uri.parse(
+          'https://esprezzo.clusium.ro/api/endpoints/check_nearby_store.php?lat=${position.latitude}&lng=${position.longitude}&radius=200',
+        ),
+      );
+      if (response.statusCode != 200) return null;
+      final data = json.decode(response.body);
+      return int.tryParse(data['storeId']?.toString() ?? '');
+    } catch (e) {
+      debugPrint('Could not detect nearby store for price updates: $e');
+      return null;
+    }
+  }
+
+  Future<void> _loadStores() async {
+    int? selectedStoreId = widget.initialStoreId;
+    try {
+      final response = await http.get(
+        Uri.parse('https://esprezzo.clusium.ro/api/endpoints/get_stores.php'),
+      );
+      final data = json.decode(response.body);
+      if (response.statusCode != 200) {
+        throw Exception(data['error'] ?? 'Nu s-au putut incarca magazinele.');
+      }
+      final stores = List<dynamic>.from(data['stores'] ?? []);
+
+      if (selectedStoreId == null) {
+        selectedStoreId = await _detectNearbyStore();
+      }
+      if (selectedStoreId == null) {
+        final prefs = await SharedPreferences.getInstance();
+        selectedStoreId = prefs.getInt('selectedStoreId');
+      }
+      if (selectedStoreId != null &&
+          !stores.any(
+            (store) =>
+                int.tryParse(store['ID']?.toString() ?? '') == selectedStoreId,
+          )) {
+        selectedStoreId = null;
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _stores = stores;
+        _selectedStoreId = selectedStoreId;
+        _loadingStores = false;
+      });
+      if (selectedStoreId != null) await _loadProducts();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = 'Nu s-au putut incarca magazinele.';
+        _loadingStores = false;
+      });
+    }
+  }
+
+  Future<void> _loadProducts() async {
+    final storeId = _selectedStoreId;
+    if (storeId == null) return;
+
+    setState(() {
+      _loadingProducts = true;
+      _error = null;
+    });
+    try {
+      final response = await http.get(
+        Uri.https(
+          'esprezzo.clusium.ro',
+          '/api/endpoints/get_store_price_updates.php',
+          {'storeId': storeId.toString()},
+        ),
+      );
+      final data = json.decode(response.body);
+      if (response.statusCode != 200) {
+        throw Exception(data['error'] ?? 'Nu s-au putut incarca preturile.');
+      }
+      if (!mounted) return;
+      setState(() {
+        _products = List<dynamic>.from(data['products'] ?? []);
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = 'Nu s-au putut incarca preturile pentru acest magazin.';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loadingProducts = false;
+        });
+      }
+    }
+  }
+
+  String _formatPrice(dynamic value) {
+    final price = double.tryParse(value?.toString() ?? '');
+    return price == null ? '-' : price.toStringAsFixed(2);
+  }
+
+  String _ageLabel(dynamic value) {
+    final rawDate = value?.toString() ?? '';
+    final date = DateTime.tryParse(rawDate);
+    if (date == null) return 'Data pretului: $rawDate';
+    final days = DateTime.now().difference(date).inDays;
+    if (days <= 0) return 'Pret actualizat astazi';
+    if (days == 1) return 'Pret vechi de 1 zi';
+    return 'Pret vechi de $days zile';
+  }
+
+  void _openProduct(dynamic product) {
+    final productId = int.tryParse(product['productId']?.toString() ?? '');
+    if (productId == null || _selectedStoreId == null) return;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => ProductDetailsPage(
+          productId: productId,
+          userId: widget.userId,
+          storeId: _selectedStoreId,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildProductTile(dynamic product) {
+    final photo = product['photo']?.toString() ?? '';
+    final promoPrice = product['promoPrice'];
+    return Card(
+      child: ListTile(
+        onTap: () => _openProduct(product),
+        leading: SizedBox.square(
+          dimension: 56,
+          child: photo.isEmpty
+              ? const Icon(Icons.image_not_supported_outlined)
+              : Image.network(
+                  'https://www.clusium.ro/photos/$photo',
+                  fit: BoxFit.cover,
+                  errorBuilder: (context, error, stackTrace) =>
+                      const Icon(Icons.image_not_supported_outlined),
+                ),
+        ),
+        title: Text(
+          product['productName']?.toString() ?? 'Produs',
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+        ),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(_ageLabel(product['priceDate'])),
+            Text('Cantitate minima: ${product['enGros'] ?? 1} buc.'),
+          ],
+        ),
+        trailing: SizedBox(
+          width: 84,
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                '${_formatPrice(promoPrice ?? product['originalPrice'])} lei',
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+              if (promoPrice != null)
+                Text(
+                  '${_formatPrice(product['originalPrice'])} lei',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    decoration: TextDecoration.lineThrough,
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Preturi de actualizat'),
+        actions: [
+          IconButton(
+            tooltip: 'Reincarca lista',
+            icon: const Icon(Icons.refresh),
+            onPressed: _loadingProducts || _selectedStoreId == null
+                ? null
+                : _loadProducts,
+          ),
+        ],
+      ),
+      body: _loadingStores
+          ? const Center(child: CircularProgressIndicator())
+          : Column(
+              children: [
+                if (_stores.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                    child: DropdownButtonFormField<int>(
+                      value: _selectedStoreId,
+                      decoration: const InputDecoration(
+                        labelText: 'Magazin',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: _stores.map<DropdownMenuItem<int>>((store) {
+                        return DropdownMenuItem<int>(
+                          value: int.tryParse(store['ID']?.toString() ?? ''),
+                          child: Text(store['location']?.toString() ?? '-'),
+                        );
+                      }).toList(),
+                      onChanged: (storeId) {
+                        if (storeId == null) return;
+                        setState(() {
+                          _selectedStoreId = storeId;
+                          _products = [];
+                        });
+                        _loadProducts();
+                      },
+                    ),
+                  ),
+                Expanded(
+                  child: _error != null
+                      ? Center(child: Text(_error!, textAlign: TextAlign.center))
+                      : _selectedStoreId == null
+                      ? const Center(
+                          child: Text('Selecteaza un magazin pentru a vedea preturile.'),
+                        )
+                      : _loadingProducts
+                      ? const Center(child: CircularProgressIndicator())
+                      : _products.isEmpty
+                      ? const Center(
+                          child: Text('Nu exista produse cu preturi pentru acest magazin.'),
+                        )
+                      : ListView.builder(
+                          padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
+                          itemCount: _products.length,
+                          itemBuilder: (context, index) =>
+                              _buildProductTile(_products[index]),
+                        ),
+                ),
+              ],
+            ),
+      bottomNavigationBar: AppBottomNavigationBar(
+        userId: widget.userId,
+        userType: widget.userType,
+        storeId: _selectedStoreId ?? widget.initialStoreId,
       ),
     );
   }
