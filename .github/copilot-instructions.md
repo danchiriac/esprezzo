@@ -1,0 +1,13 @@
+- [x] Verify that the copilot-instructions.md file in the .github directory is created.
+
+- [x] Clarify Project Requirements
+- [ ] Scaffold the Project
+- [x] Customize the Project
+- [ ] Install Required Extensions
+- [x] Compile the Project
+- [ ] Create and Run Task
+- [ ] Launch the Project
+- [ ] Ensure Documentation is Complete
+
+Work through each checklist item systematically.
+Update the copilot-instructions.md file in the .github directory directly as you complete each step.

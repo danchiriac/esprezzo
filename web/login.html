@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Autentificare Esprezzo</title>
+  <style>
+    body { font-family: Arial, sans-serif; background: #f5f5f5; }
+    .login-container {
+      max-width: 400px;
+      margin: 60px auto;
+      background: #fff;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      padding: 32px;
+    }
+    h2 { text-align: center; margin-bottom: 24px; }
+    label { display: block; margin-bottom: 8px; }
+    input[type="text"], input[type="password"] {
+      width: 100%;
+      padding: 8px;
+      margin-bottom: 16px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+    }
+    button {
+      width: 100%;
+      padding: 10px;
+      background: #673ab7;
+      color: #fff;
+      border: none;
+      border-radius: 4px;
+      font-size: 16px;
+      cursor: pointer;
+    }
+    .error { color: #d32f2f; margin-bottom: 16px; }
+    .success { color: #388e3c; margin-bottom: 16px; }
+  </style>
+</head>
+<body>
+  <div class="login-container">
+    <h2>Autentificare Esprezzo</h2>
+    <div id="message"></div>
+    <form id="loginForm">
+      <label for="username">Utilizator (email):</label>
+      <input type="text" id="username" name="username" required>
+      <label for="password">Parola:</label>
+      <input type="password" id="password" name="password" required>
+      <button type="submit">Autentificare</button>
+      <button type="button" id="logoutButton" hidden>Deconectare</button>
+    </form>
+  </div>
+  <script>
+    const logoutButton = document.getElementById('logoutButton');
+    logoutButton.hidden = !localStorage.getItem('userId');
+    logoutButton.addEventListener('click', function() {
+      localStorage.removeItem('userId');
+      localStorage.removeItem('userType');
+      localStorage.removeItem('authToken');
+      logoutButton.hidden = true;
+      const messageDiv = document.getElementById('message');
+      messageDiv.textContent = 'Deconectare reușită.';
+      messageDiv.className = 'success';
+    });
+
+    document.getElementById('loginForm').addEventListener('submit', async function(e) {
+      e.preventDefault();
+      const username = document.getElementById('username').value;
+      const password = document.getElementById('password').value;
+      const messageDiv = document.getElementById('message');
+      messageDiv.textContent = '';
+      messageDiv.className = '';
+      try {
+        const resp = await fetch('/api/endpoints/auth.php', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: username, password: password })
+        });
+        const data = await resp.json();
+        if (resp.status === 200 && data.success) {
+          localStorage.setItem('userId', String(data.userId));
+          localStorage.setItem('userType', String(data.userType));
+          localStorage.setItem('authToken', String(data.authToken));
+          logoutButton.hidden = false;
+          messageDiv.textContent = 'Autentificare reușită!';
+          messageDiv.className = 'success';
+        } else {
+          messageDiv.textContent = 'Autentificare eșuată: ' + (data.error || 'Eroare necunoscută');
+          messageDiv.className = 'error';
+        }
+      } catch (err) {
+        messageDiv.textContent = 'Eroare la conectare cu serverul.';
+        messageDiv.className = 'error';
+      }
+    });
+  </script>
+</body>
+</html>
